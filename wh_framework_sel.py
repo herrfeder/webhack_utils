@@ -5,6 +5,13 @@ import pdb
 import re
 from lxml.html.diff import htmldiff
 
+service_args = [
+    '--proxy=127.0.0.1:8090',
+    '--proxy-type=http',
+    ]
+
+
+
 class SelObject(object):
 
     def __init__(self):
@@ -13,7 +20,7 @@ class SelObject(object):
         #profile.set_preference("general.useragent.override",useragent)
 
         try:
-	        self.br = webdriver.PhantomJS("./phantomjs")
+	        self.br = webdriver.PhantomJS("./phantomjs",service_args=service_args)
 
 	        #self.br = webdriver.Firefox()
         except Exception, e:
@@ -134,7 +141,7 @@ class SelObject(object):
             if url.startswith("127.0.0.1"):
                 url = "http://"+url
             elif not url.startswith("http"):
-                url = "http://"+url
+                url = "https://"+url
             return url
 
     def inject_sql(self,url="",index=0, subtype=""):
@@ -256,7 +263,7 @@ class SelObject(object):
             try:
                 self.br.get(url)
                 self.last_html = self.br.page_source
-            except URLError:
+            except:
                 try:
                     self.br.get(url.replace("http","https"))
                     self.last_html = self.br.page_source
@@ -332,7 +339,7 @@ class SelObject(object):
 
 selob = SelObject()
 
-selob.find_all_forms("127.0.0.1/mutillidae/index.php?page=capture-data.php")
+selob.find_all_forms("www.heise.de")
 #selob.print_forms()
 selob.modify_cookie("<script>document.getElementByTagName('body').innerHTML = ''</script>")
 
