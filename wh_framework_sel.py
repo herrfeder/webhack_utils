@@ -1,16 +1,17 @@
 from selenium import webdriver
+from selenium.webdriver.support.ui import Select
 from bs4 import BeautifulSoup as bs
 import time
 import pdb
 import re
 from lxml.html.diff import htmldiff
+from selenium.webdriver.common.keys import Keys
+import logging
 
 service_args = [
     '--proxy=127.0.0.1:8090',
     '--proxy-type=http',
-    ]
-
-
+]
 
 class SelObject(object):
 
@@ -20,8 +21,8 @@ class SelObject(object):
         #profile.set_preference("general.useragent.override",useragent)
 
         try:
-	        self.br = webdriver.PhantomJS("./phantomjs",service_args=service_args)
-
+	        #self.br = webdriver.PhantomJS("./phantomjs",service_args=service_args)
+	        self.br = webdriver.PhantomJS("./phantomjs")
 	        #self.br = webdriver.Firefox()
         except Exception, e:
 			print " [!] Browser object creation error:", e
@@ -37,6 +38,10 @@ class SelObject(object):
         self.reg_dict = {}
         self.temp_visited = []
 
+        self.reg_dict["login"] = r'[Ll][Oo][Gg][Ii][Nn]'
+        self.reg_dict["user"] = r'[Uu]sern'
+        self.reg_dict["password"] = r'[Pp]asswor[td]'
+        self.login = False
 
 
 	def __wait(self):
@@ -57,21 +62,27 @@ class SelObject(object):
             self.temp_visited.append(url)
             if "logout" in url:
                 return
-            result = self.get_link(url)
+            result = self.get_link_sure(url)
+
             if result == False:
                 return
             else:
-                    bsoup = self.parse_html_to_bs(result)
+                bsoup = self.parse_html_to_bs(result)
         if bsoup != None:
             templinks = bsoup.findAll("a")
+            #for link in templinks:
+            #    print link.attrs
             self.get_input_attr(inputdata=templinks,key="href")
-            templinks = [] 
+            templinks = []
             for pair in self.input_pairs:
-                if (self.base_url.replace("http://","").replace("https://","") in pair["href"]) or (pair["href"].startswith("/")):
+                if (self.base_url.replace("http://","").replace("https://","") in pair["href"]) or \
+                (pair["href"].startswith("/")) or \
+                ((re.search("^[a-zA-Z0-9]",pair["href"]) and not (re.search("^(http)",pair["href"])))) or \
+                (pair["href"].endswith("php")):
                     templinks.append(pair["href"])
-                index += 1
 
             for link in templinks:
+                print link
                 if not self.base_url.endswith("/"):
                     tempurl = self.base_url+"/"
                 else:
@@ -85,18 +96,16 @@ class SelObject(object):
                     print "[*] discovered new link:"+new_link
                     self.links.append(new_link)
 
-                if len(self.links)>= 10:
-                    #print "[*] We have 10 links, thats enough"
-                    return
 
     def parse_html_to_bs(self,data):
         try:
-            temp_bs = bs([data],"lxml")
-        except:
+            temp_bs = bs(data,"lxml")
+        except Exception as e:
+            logging.warning("ERROR: %s"%(e))
             return None 
         return temp_bs
     
-    def collect_all_links(self, url=""):
+    def collect_all_links(self, url="",limit=0):
         try:
             if self.links[0]:
                 pass
@@ -106,11 +115,12 @@ class SelObject(object):
             if link not in self.temp_visited:
                 print "[+] added link:"+link
                 self.collect_link(link)
-
+                
                 self.temp_visited.append(link)
-        if len(self.links)>=10:
-            print "[*] We have 10 links, thats enough"
-            return
+        if limit != 0:
+            if len(self.links)>=limit:
+                print "[*] We have %s links, thats enough"%(str(limit))
+                return
 
     def get_reg(self, key):
         return self.reg_dict[key]
@@ -118,10 +128,16 @@ class SelObject(object):
     
     def find_all_forms(self,url="",response=""):
         if response == "":
-            bsoup = self.parse_html_to_bs(self.get_link(url=url))
+            bsoup = self.parse_html_to_bs(self.get_link_sure(url=url))
+            time.sleep(0.5)
         else:
             bsoup = response
         if bsoup != None:
+            print ""
+            print self.br.current_url
+            print url
+            #if "text-file-viewer.php" in url:
+            #    pdb.set_trace()
             forms = bsoup.findAll("form")
             form_temp_list = []
             for form in forms:
@@ -141,7 +157,7 @@ class SelObject(object):
             if url.startswith("127.0.0.1"):
                 url = "http://"+url
             elif not url.startswith("http"):
-                url = "https://"+url
+                url = "http://"+url
             return url
 
     def inject_sql(self,url="",index=0, subtype=""):
@@ -174,7 +190,7 @@ class SelObject(object):
     def process_response(self,before_data,after_data, process_type = "injection", payloadpattern=""):
         diff_data = bs(str(htmldiff(after_data,before_data).split("<del>")[1:-1]))
 
-        pdb.set_trace()
+        #pdb.set_trace()
 
         if process_type == "injection":
             if re.search(r'[sS][qQ][lL]',diff_data.text):
@@ -192,64 +208,83 @@ class SelObject(object):
 
 
 
-
-
-
-
-
-
     def check_login(self):
 
         if not self.forms_and_inputs:
             return 
-        for element in self.forms_and_inputs[self.last_url][0][1:-1]:    
-            if re.search(self.get_reg("login"),str(element)):
-                try:
-                    if self.forms_and_inputs[self.last_url][1]:
-                        pass
-                except:
-                    self.login_page = self.br.geturl()
-                    print self.login_page
-                    return True
-            
-                logging.warning("Other forms to try")
-                return False
+        try:
+            for element in self.forms_and_inputs[self.last_url][0][1:-1]:    
+                if re.search(self.get_reg("login"),str(element)):
+                    try:
+                        if self.forms_and_inputs[self.last_url][1]:
+                            pass
+                    except:
+                        self.login_page = self.br.current_url
+                        return True
+                
+                    logging.warning("Other forms to try")
+                    self.login=True
+                    return False
+        except Exception as e:
+            print e
+            self.login=True
+            return False
 
+    def check_valid_login_form(self,text):
+
+        if re.search(self.get_reg("password"), text):
+            return True
+        else:
+            return False
 
     def do_login(self, username, password, authtype="form"):
         key = "name"
         if authtype=="form":
-            if not self.login_page in self.br.geturl():
+            if not self.login_page in self.br.current_url:
                 self.get_link(self.login_page)
-            self.br.select_form(nr=0)
-            self.get_input_attr()
-            for pair in self.input_pairs:
-                if re.search(self.get_reg("user"),pair[key]):
-                    self.br.form[pair[key]]=username
-                if re.search(self.get_reg("password"),pair[key]):
-                    self.br.form[pair[key]]=password
+            select = self.br.find_element_by_tag_name("form")
+            if not self.check_valid_login_form(select.text):
+                logging.warning("No login form found")
+                return
+            userfield = select.find_element_by_name("username")
+            userfield.send_keys(username)
+            passfield = select.find_element_by_name("password")
+            passfield.send_keys(password)
+            passfield.send_keys(Keys.ENTER)
+            '''login_field = select.find_element_by_name("Login")
+            login_field = self.br.find_element_by_xpath("//*[@type='submit']")
+            login_field.submit()'''
+            # why does this not work ???
 
-        self.last_response = self.br.submit()
-        self.last_html = self.last_response.read()
-        print self.cookies
+            #self.get_input_attr()
+            #for pair in self.input_pairs:
+            #    if re.search(self.get_reg("user"),pair[key]):
+            #        self.br.form[pair[key]]=username
+            #    if re.search(self.get_reg("password"),pair[key]):
+            #        self.br.form[pair[key]]=password
+
+        #self.last_response = self.br.submit()
+        #time.sleep(1)
+        #pdb.set_trace()
+        self.last_html = self.br.page_source
+        self.login = True
+        #print self.cookies
         
-    def submit_form_fields(self, payload="", formindex=0, inputindex=0, subtype=""):
-        key = "name"
-        self.get_input_attr(formindex=formindex)
-        form = self.br.find_elements_by_tag_name[formindex]
 
-        print "BROWSER_BEFORE_SUBMITTING:"+str(self.br.current_url())
-        if subtype=="":
-            print "INPUT_FIELD:"+str(self.input_pairs[inputindex][key])
-            input_field = form.find_elements_by_tag_name([self.input_pairs[inputindex][key]])
-            for field in input_field:
-                field.send_keys(payload)
+    def get_link_sure(self,url,returntype="raw",response=""):
+        try_index=0
+        self.get_link(url,returntype="raw",response="")
+        if self.login == False:
+            return self.last_html
+        while(url not in self.br.current_url):
+            logging.warning("have to load site again: %s instead of %s"%(self.br.current_url,url) )
+            time.sleep(0.5)
+            self.get_link(url,returntype="raw",response="")
+            try_index += 1
+            if try_index == 5:
+                return self.last_html
+        return self.last_html
 
-        temp_response_before = self.last_html
-        form.submit()
-        temp_response_after = self.br.page_source
-
-        temp_result = self.process_response(temp_response_before,temp_response_after.read())
 
     def get_link(self,url,returntype="raw",response=""):
 
@@ -258,12 +293,13 @@ class SelObject(object):
             self.base_url = url
         self.last_url = url
         if "logout" in url: ### VERY IMPORTANT, BUT NEEDS ENHANCEMENT
+            logging.warning("There was logout in the url")
             return False
         if response=="":
             try:
                 self.br.get(url)
                 self.last_html = self.br.page_source
-            except:
+            except URLError:
                 try:
                     self.br.get(url.replace("http","https"))
                     self.last_html = self.br.page_source
@@ -271,7 +307,6 @@ class SelObject(object):
                     pass
         else:
             self.last_response = response
-
         if returntype == "raw":
             return self.last_html
 
@@ -284,11 +319,11 @@ class SelObject(object):
             process_data = inputdata
         for inputfield in process_data:
             for attr in inputfield.attrs:
-                if str(attr[0]) == key:
+                if str(attr) == key:
                     try:
-                        self.input_pairs.append({key:str(attr[1])})
-                    except:
-                        pdb.set_trace()
+                        self.input_pairs.append({key:inputfield.attrs[key]})
+                    except Exception as e:
+                        print e
 
         return self.input_pairs
 
@@ -337,9 +372,4 @@ class SelObject(object):
 
 
 
-selob = SelObject()
-
-selob.find_all_forms("www.heise.de")
-#selob.print_forms()
-selob.modify_cookie("<script>document.getElementByTagName('body').innerHTML = ''</script>")
 
